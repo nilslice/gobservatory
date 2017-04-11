@@ -1,6 +1,7 @@
 ![My friend, "Gotoro"](ponzu-banner.png)
 
 # Ponzu 
+[![Current Release](https://img.shields.io/github/release/ponzu-cms/ponzu.svg)](https://github.com/ponzu-cms/ponzu/releases/latest)
 [![Sourcegraph Badge](https://sourcegraph.com/github.com/ponzu-cms/ponzu/-/badge.svg)](https://sourcegraph.com/github.com/ponzu-cms/ponzu?badge)
 
 Ponzu is a powerful and efficient open-source HTTP server framework and CMS. It 
@@ -89,10 +90,10 @@ Example:
             generator      struct fields and built-in types...
              |              |
              v              v    
-$ ponzu gen content review title:"string" body:"string" rating:"int" tags:"[]string"
-                     ^
-                     |
-                    struct type
+$ ponzu gen content review title:"string" body:"string":richtext rating:"int"
+                     ^                                   ^
+                     |                                   |
+                    struct type                         (optional) input view specifier
 ```
 
 The command above will generate the file `content/review.go` with boilerplate
@@ -111,6 +112,27 @@ The generate command will intelligently parse more sophisticated field names
 such as 'field_name' and convert it to 'FieldName' and vice versa, only where 
 appropriate as per common Go idioms. Errors will be reported, but successful 
 generate commands return nothing.
+
+**Input View Specifiers** _(optional)_
+
+The CLI can optionally parse a third parameter on the fields provided to generate 
+the type of HTML view an editor field is presented within. If no third parameter
+is added, a plain text HTML input will be generated. In the example above, the 
+argument shown as `body:string:richtext` would show the Richtext input instead
+of a plain text HTML input (as shown in the screenshot). The following input
+view specifiers are implmeneted:
+
+| CLI parameter | Generates |
+|---------------|-----------| 
+| checkbox | `editor.Checkbox()` |
+| custom | generates a pre-styled empty div to fill with HTML |
+| file | `editor.File()` |
+| hidden | `editor.Input()` + uses type=hidden |
+| input, text | `editor.Input()` |
+| richtext | `editor.Richtext()` |
+| select | `editor.Select()` |
+| textarea | `editor.Textarea()` |
+| tags | `editor.Tags()` |
 
 ---
 
@@ -272,6 +294,7 @@ $ ponzu --dev -fork=github.com/nilslice/ponzu new /path/to/new/project
 - [golang.org/x/text/unicode/norm](https://golang.org/x/text/unicode/norm)
 - [golang.org/x/text/transform](https://golang.org/x/text/transform)
 - [golang.org/x/crypto/bcrypt](https://golang.org/x/crypto/bcrypt)
+- [golang.org/x/net/http2](https://golang.org/x/net/http2)
 - [github.com/nilslice/jwt](https://github.com/nilslice/jwt)
 - [github.com/nilslice/email](https://github.com/nilslice/email)
 - [github.com/gorilla/schema](https://github.com/gorilla/schema)

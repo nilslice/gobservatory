@@ -39,18 +39,16 @@ type Star struct {
 	Tags            []string `json:"tags"`
 }
 
-func (s *Star) Accept(res http.ResponseWriter, req *http.Request) error {
+func (s *Star) Create(res http.ResponseWriter, req *http.Request) error {
 	return nil
 }
-func (s *Star) AcceptUpdate(res http.ResponseWriter, req *http.Request) error {
+func (s *Star) Update(res http.ResponseWriter, req *http.Request) error {
 	if user.IsValid(req) == false {
 		return api.ErrNoAuth
 	}
 	return nil
 }
-func (s *Star) Approve(res http.ResponseWriter, req *http.Request) error {
-	return nil
-}
+
 func (s *Star) AutoApprove(http.ResponseWriter, *http.Request) error {
 	return nil
 }

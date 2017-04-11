@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,14 +14,11 @@ import (
 	"github.com/ponzu-cms/ponzu/system/item"
 )
 
-var ErrNoAuth = errors.New("Auth failed for update request.")
-
 // Updateable accepts or rejects update POST requests to endpoints such as:
 // /api/content/update?type=Review&id=1
 type Updateable interface {
-	// AcceptUpdate allows external content update submissions of a specific type
-	// user.IsValid(req) may be checked in AcceptUpdate to validate the request
-	AcceptUpdate(http.ResponseWriter, *http.Request) error
+	// Update enabled external clients to update content of a specific type
+	Update(http.ResponseWriter, *http.Request) error
 }
 
 func updateContentHandler(res http.ResponseWriter, req *http.Request) {
@@ -46,14 +42,14 @@ func updateContentHandler(res http.ResponseWriter, req *http.Request) {
 
 	p, found := item.Types[t]
 	if !found {
-		log.Println("[Update] attempt to submit unknown type:", t, "from:", req.RemoteAddr)
+		log.Println("[Update] attempt to update content unknown type:", t, "from:", req.RemoteAddr)
 		res.WriteHeader(http.StatusNotFound)
 		return
 	}
 
 	id := req.URL.Query().Get("id")
 	if !db.IsValidID(id) {
-		log.Println("[Update] attempt to submit update with missing or invalid id from:", req.RemoteAddr)
+		log.Println("[Update] attempt to update content with missing or invalid id from:", req.RemoteAddr)
 		res.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -136,16 +132,21 @@ func updateContentHandler(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	err = hook.BeforeAcceptUpdate(res, req)
+	err = hook.BeforeAPIUpdate(res, req)
 	if err != nil {
-		log.Println("[Update] error calling BeforeAcceptUpdate:", err)
+		log.Println("[Update] error calling BeforeAPIUpdate:", err)
+		if err == ErrNoAuth {
+			// BeforeAPIUpdate can check user.IsValid(req) for auth
+			res.WriteHeader(http.StatusUnauthorized)
+		}
 		return
 	}
 
-	err = ext.AcceptUpdate(res, req)
+	err = ext.Update(res, req)
 	if err != nil {
-		log.Println("[Update] error calling AcceptUpdate:", err)
+		log.Println("[Update] error calling Update:", err)
 		if err == ErrNoAuth {
+			// Update can check user.IsValid(req) or other forms of validation for auth
 			res.WriteHeader(http.StatusUnauthorized)
 		}
 		return
@@ -160,15 +161,15 @@ func updateContentHandler(res http.ResponseWriter, req *http.Request) {
 	// set specifier for db bucket in case content is/isn't Trustable
 	var spec string
 
-	_, err = db.SetContent(t+spec+":"+id, req.PostForm)
+	_, err = db.UpdateContent(t+spec+":"+id, req.PostForm)
 	if err != nil {
-		log.Println("[Update] error calling SetContent:", err)
+		log.Println("[Update] error calling UpdateContent:", err)
 		res.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	// set the target in the context so user can get saved value from db in hook
-	ctx := context.WithValue(req.Context(), "target", fmt.Sprintf("%s:%d", t, id))
+	ctx := context.WithValue(req.Context(), "target", fmt.Sprintf("%s:%s", t, id))
 	req = req.WithContext(ctx)
 
 	err = hook.AfterSave(res, req)
@@ -177,9 +178,9 @@ func updateContentHandler(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	err = hook.AfterAcceptUpdate(res, req)
+	err = hook.AfterAPIUpdate(res, req)
 	if err != nil {
-		log.Println("[Update] error calling AfterAcceptUpdate:", err)
+		log.Println("[Update] error calling AfterAPIUpdate:", err)
 		return
 	}
 

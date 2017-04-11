@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/blevesearch/bleve"
+	"github.com/blevesearch/bleve/mapping"
 	uuid "github.com/satori/go.uuid"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
@@ -42,11 +44,14 @@ type Sortable interface {
 // to the different lifecycles/events a struct may encounter. Item implements
 // Hookable with no-ops so our user can override only whichever ones necessary.
 type Hookable interface {
-	BeforeAcceptUpdate(http.ResponseWriter, *http.Request) error
-	AfterAcceptUpdate(http.ResponseWriter, *http.Request) error
+	BeforeAPICreate(http.ResponseWriter, *http.Request) error
+	AfterAPICreate(http.ResponseWriter, *http.Request) error
 
-	BeforeAccept(http.ResponseWriter, *http.Request) error
-	AfterAccept(http.ResponseWriter, *http.Request) error
+	BeforeAPIUpdate(http.ResponseWriter, *http.Request) error
+	AfterAPIUpdate(http.ResponseWriter, *http.Request) error
+
+	BeforeAPIDelete(http.ResponseWriter, *http.Request) error
+	AfterAPIDelete(http.ResponseWriter, *http.Request) error
 
 	BeforeSave(http.ResponseWriter, *http.Request) error
 	AfterSave(http.ResponseWriter, *http.Request) error
@@ -135,23 +140,33 @@ func (i Item) String() string {
 	return fmt.Sprintf("Item ID: %s", i.UniqueID())
 }
 
-// BeforeAcceptUpdate is a no-op to ensure structs which embed Item implement Hookable
-func (i Item) BeforeAcceptUpdate(res http.ResponseWriter, req *http.Request) error {
+// BeforeAPICreate is a no-op to ensure structs which embed Item implement Hookable
+func (i Item) BeforeAPICreate(res http.ResponseWriter, req *http.Request) error {
 	return nil
 }
 
-// AfterAcceptUpdate is a no-op to ensure structs which embed Item implement Hookable
-func (i Item) AfterAcceptUpdate(res http.ResponseWriter, req *http.Request) error {
+// AfterAPICreate is a no-op to ensure structs which embed Item implement Hookable
+func (i Item) AfterAPICreate(res http.ResponseWriter, req *http.Request) error {
 	return nil
 }
 
-// BeforeAccept is a no-op to ensure structs which embed Item implement Hookable
-func (i Item) BeforeAccept(res http.ResponseWriter, req *http.Request) error {
+// BeforeAPIUpdate is a no-op to ensure structs which embed Item implement Hookable
+func (i Item) BeforeAPIUpdate(res http.ResponseWriter, req *http.Request) error {
 	return nil
 }
 
-// AfterAccept is a no-op to ensure structs which embed Item implement Hookable
-func (i Item) AfterAccept(res http.ResponseWriter, req *http.Request) error {
+// AfterAPIUpdate is a no-op to ensure structs which embed Item implement Hookable
+func (i Item) AfterAPIUpdate(res http.ResponseWriter, req *http.Request) error {
+	return nil
+}
+
+// BeforeAPIDelete is a no-op to ensure structs which embed Item implement Hookable
+func (i Item) BeforeAPIDelete(res http.ResponseWriter, req *http.Request) error {
+	return nil
+}
+
+// AfterAPIDelete is a no-op to ensure structs which embed Item implement Hookable
+func (i Item) AfterAPIDelete(res http.ResponseWriter, req *http.Request) error {
 	return nil
 }
 
@@ -193,6 +208,15 @@ func (i Item) BeforeReject(res http.ResponseWriter, req *http.Request) error {
 // AfterReject is a no-op to ensure structs which embed Item implement Hookable
 func (i Item) AfterReject(res http.ResponseWriter, req *http.Request) error {
 	return nil
+}
+
+// SearchMapping returns a default implementation of a Bleve IndexMappingImpl
+// partially implements db.Searchable
+func (i Item) SearchMapping() (*mapping.IndexMappingImpl, error) {
+	mapping := bleve.NewIndexMapping()
+	mapping.StoreDynamic = false
+
+	return mapping, nil
 }
 
 // Slug returns a URL friendly string from the title of a post item
@@ -245,6 +269,7 @@ func stringToSlug(s string) (string, error) {
 
 	str := strings.Replace(string(src), "'", "", -1)
 	str = strings.Replace(str, `"`, "", -1)
+	str = strings.Replace(str, "&", "-", -1)
 
 	t := transform.Chain(norm.NFD, transform.RemoveFunc(isMn), norm.NFC)
 	slug, _, err := transform.String(t, str)
@@ -253,4 +278,10 @@ func stringToSlug(s string) (string, error) {
 	}
 
 	return strings.TrimSpace(slug), nil
+}
+
+// NormalizeString removes and replaces illegal characters for URLs and other
+// path entities. Useful for taking user input and converting it for keys or URLs.
+func NormalizeString(s string) (string, error) {
+	return stringToSlug(s)
 }

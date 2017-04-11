@@ -866,7 +866,7 @@ func contentsHandler(res http.ResponseWriter, req *http.Request) {
 	}
 
 	var hasExt bool
-	_, ok = pt.(api.Externalable)
+	_, ok = pt.(api.Createable)
 	if ok {
 		hasExt = true
 	}
@@ -941,8 +941,13 @@ func contentsHandler(res http.ResponseWriter, req *http.Request) {
 										var path = window.location.pathname;
 										var s = sort.val();
 										var t = getParam('type');
+										var status = getParam('status');
 
-										window.location.replace(path + '?type=' + t + '&order=' + s)
+										if (status == "") {
+											status = "public";
+										}
+
+										window.location.replace(path + '?type=' + t + '&order=' + s + '&status=' + status);
 									});
 
 									var order = getParam('order');
@@ -1409,7 +1414,7 @@ func approveContentHandler(res http.ResponseWriter, req *http.Request) {
 	}
 
 	if pendingID != "" {
-		err = db.DeleteContent(req.FormValue("type")+":"+pendingID, req.Form)
+		err = db.DeleteContent(req.FormValue("type") + ":" + pendingID)
 		if err != nil {
 			log.Println("Failed to remove content after approval:", err)
 		}
@@ -1531,7 +1536,7 @@ func editHandler(res http.ResponseWriter, req *http.Request) {
 
 		// create a timestamp if one was not set
 		if ts == "" {
-			ts = fmt.Sprintf("%d", int64(time.Nanosecond)*time.Now().UnixNano()/int64(time.Millisecond))
+			ts = fmt.Sprintf("%d", int64(time.Nanosecond)*time.Now().UTC().UnixNano()/int64(time.Millisecond))
 			req.PostForm.Set("timestamp", ts)
 		}
 
@@ -1757,7 +1762,7 @@ func deleteHandler(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	err = db.DeleteContent(t+":"+id, req.Form)
+	err = db.DeleteContent(t + ":" + id)
 	if err != nil {
 		log.Println(err)
 		res.WriteHeader(http.StatusInternalServerError)

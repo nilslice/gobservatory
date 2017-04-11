@@ -3,13 +3,13 @@ package db
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ponzu-cms/ponzu/system/item"
 
@@ -18,16 +18,18 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
+// IsValidID checks that an ID from a DB target is valid.
+// ID should be an integer greater than 0.
+// ID of -1 is special for new posts, not updates.
+// IDs start at 1 for auto-incrementing
 func IsValidID(id string) bool {
-	// ID should be a non-negative integer.
-	// ID of -1 is special for new posts, not updates.
-	if i, err := strconv.Atoi(id); err != nil || i < 0 {
+	if i, err := strconv.Atoi(id); err != nil || i < 1 {
 		return false
 	}
 	return true
 }
 
-// SetContent inserts or updates values in the database.
+// SetContent inserts/replaces values in the database.
 // The `target` argument is a string made up of namespace:id (string:int)
 func SetContent(target string, data url.Values) (int, error) {
 	t := strings.Split(target, ":")
@@ -43,6 +45,19 @@ func SetContent(target string, data url.Values) (int, error) {
 		return insert(ns, data)
 	}
 
+	return update(ns, id, data, nil)
+}
+
+// UpdateContent updates/merges values in the database.
+// The `target` argument is a string made up of namespace:id (string:int)
+func UpdateContent(target string, data url.Values) (int, error) {
+	t := strings.Split(target, ":")
+	ns, id := t[0], t[1]
+
+	if !IsValidID(id) {
+		return 0, fmt.Errorf("Invalid ID in target for UpdateContent: %s", target)
+	}
+
 	// retrieve existing content from the database
 	existingContent, err := Content(target)
 	if err != nil {
@@ -51,7 +66,9 @@ func SetContent(target string, data url.Values) (int, error) {
 	return update(ns, id, data, &existingContent)
 }
 
-// update can support merge or replace behavior
+// update can support merge or replace behavior depending on existingContent.
+// if existingContent is non-nil, we merge field values. empty/missing fields are ignored.
+// if existingContent is nil, we replace field values. empty/missing fields are reset.
 func update(ns, id string, data url.Values, existingContent *[]byte) (int, error) {
 	var specifier string // i.e. __pending, __sorted, etc.
 	if strings.Contains(ns, "__") {
@@ -105,6 +122,15 @@ func update(ns, id string, data url.Values, existingContent *[]byte) (int, error
 		return 0, err
 	}
 
+	go func() {
+		// update data in search index
+		target := fmt.Sprintf("%s:%s", ns, id)
+		err = UpdateSearchIndex(target, string(j))
+		if err != nil {
+			log.Println("[search] UpdateSearchIndex Error:", err)
+		}
+	}()
+
 	return cid, nil
 }
 
@@ -112,8 +138,7 @@ func mergeData(ns string, data url.Values, existingContent []byte) ([]byte, erro
 	var j []byte
 	t, ok := item.Types[ns]
 	if !ok {
-		log.Println("Type not found from namespace:", ns)
-		return j, errors.New("Invalid type.")
+		return nil, fmt.Errorf("Namespace type not found: %s", ns)
 	}
 
 	// Unmarsal the existing values
@@ -154,6 +179,8 @@ func insert(ns string, data url.Values) (int, error) {
 		specifier = "__" + spec[1]
 	}
 
+	var j []byte
+	var cid string
 	err := store.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists([]byte(ns + specifier))
 		if err != nil {
@@ -166,7 +193,7 @@ func insert(ns string, data url.Values) (int, error) {
 		if err != nil {
 			return err
 		}
-		cid := strconv.FormatUint(id, 10)
+		cid = strconv.FormatUint(id, 10)
 		effectedID, err = strconv.Atoi(cid)
 		if err != nil {
 			return err
@@ -182,7 +209,7 @@ func insert(ns string, data url.Values) (int, error) {
 			data.Set("__specifier", specifier)
 		}
 
-		j, err := postToJSON(ns, data)
+		j, err = postToJSON(ns, data)
 		if err != nil {
 			return err
 		}
@@ -223,16 +250,39 @@ func insert(ns string, data url.Values) (int, error) {
 		return 0, err
 	}
 
+	go func() {
+		// add data to seach index
+		target := fmt.Sprintf("%s:%s", ns, cid)
+		err = UpdateSearchIndex(target, string(j))
+		if err != nil {
+			log.Println("[search] UpdateSearchIndex Error:", err)
+		}
+	}()
+
 	return effectedID, nil
 }
 
 // DeleteContent removes an item from the database. Deleting a non-existent item
 // will return a nil error.
-func DeleteContent(target string, data url.Values) error {
+func DeleteContent(target string) error {
 	t := strings.Split(target, ":")
 	ns, id := t[0], t[1]
 
-	err := store.Update(func(tx *bolt.Tx) error {
+	b, err := Content(target)
+	if err != nil {
+		return err
+	}
+
+	// get content slug to delete from __contentIndex if it exists
+	// this way content added later can use slugs even if previously
+	// deleted content had used one
+	var itm item.Item
+	err = json.Unmarshal(b, &itm)
+	if err != nil {
+		return err
+	}
+
+	err = store.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(ns))
 		if b == nil {
 			return bolt.ErrBucketNotFound
@@ -244,14 +294,13 @@ func DeleteContent(target string, data url.Values) error {
 		}
 
 		// if content has a slug, also delete it from __contentIndex
-		slug := data.Get("slug")
-		if slug != "" {
+		if itm.Slug != "" {
 			ci := tx.Bucket([]byte("__contentIndex"))
 			if ci == nil {
 				return bolt.ErrBucketNotFound
 			}
 
-			err := ci.Delete([]byte(slug))
+			err := ci.Delete([]byte(itm.Slug))
 			if err != nil {
 				return err
 			}
@@ -268,6 +317,17 @@ func DeleteContent(target string, data url.Values) error {
 	if err != nil {
 		return err
 	}
+
+	go func() {
+		// delete indexed data from search index
+		if !strings.Contains(ns, "__") {
+			target = fmt.Sprintf("%s:%s", ns, id)
+			err = DeleteSearchIndex(target)
+			if err != nil {
+				log.Println("[search] DeleteSearchIndex Error:", err)
+			}
+		}
+	}()
 
 	// exception to typical "run in goroutine" pattern:
 	// we want to have an updated admin view as soon as this is deleted, so
@@ -304,6 +364,23 @@ func Content(target string) ([]byte, error) {
 	}
 
 	return val.Bytes(), nil
+}
+
+// ContentMulti returns a set of content based on the the targets / identifiers
+// provided in Ponzu target string format: Type:ID
+// NOTE: All targets should be of the same type
+func ContentMulti(targets []string) ([][]byte, error) {
+	var contents [][]byte
+	for i := range targets {
+		b, err := Content(targets[i])
+		if err != nil {
+			return nil, err
+		}
+
+		contents = append(contents, b)
+	}
+
+	return contents, nil
 }
 
 // ContentBySlug does a lookup in the content index to find the type and id of
@@ -431,7 +508,7 @@ func Query(namespace string, opts QueryOptions) (int, [][]byte) {
 		i := 0   // count of num posts added
 		cur := 0 // count of num cursor moves
 		switch opts.Order {
-		case "asc":
+		case "desc", "":
 			for k, v := c.Last(); k != nil; k, v = c.Prev() {
 				if cur < start {
 					cur++
@@ -447,7 +524,7 @@ func Query(namespace string, opts QueryOptions) (int, [][]byte) {
 				cur++
 			}
 
-		case "desc", "":
+		case "asc":
 			for k, v := c.First(); k != nil; k, v = c.Next() {
 				if cur < start {
 					cur++
@@ -465,7 +542,7 @@ func Query(namespace string, opts QueryOptions) (int, [][]byte) {
 
 		default:
 			// results for DESC order
-			for k, v := c.First(); k != nil; k, v = c.Next() {
+			for k, v := c.Last(); k != nil; k, v = c.Prev() {
 				if cur < start {
 					cur++
 					continue
@@ -487,10 +564,54 @@ func Query(namespace string, opts QueryOptions) (int, [][]byte) {
 	return total, posts
 }
 
+var sortContentCalls = make(map[string]time.Time)
+var waitDuration = time.Millisecond * 4000
+
+func enoughTime(key string, withDelay bool) bool {
+	last, ok := sortContentCalls[key]
+	if !ok {
+		// no envocation yet
+		// track next evocation
+		sortContentCalls[key] = time.Now()
+		return true
+	}
+
+	// if our required wait time has not been met, return false
+	if !time.Now().After(last.Add(waitDuration)) {
+		return false
+	}
+
+	// dispatch a delayed envocation in case no additional one follows
+	if withDelay {
+		go func() {
+			select {
+			case <-time.After(waitDuration):
+				if enoughTime(key, false) {
+					// track next evocation
+					sortContentCalls[key] = time.Now()
+					SortContent(key)
+				} else {
+					// retrigger
+					SortContent(key)
+				}
+			}
+		}()
+	}
+
+	// track next evocation
+	sortContentCalls[key] = time.Now()
+	return true
+}
+
 // SortContent sorts all content of the type supplied as the namespace by time,
 // in descending order, from most recent to least recent
 // Should be called from a goroutine after SetContent is successful
 func SortContent(namespace string) {
+	// wait if running too frequently per namespace
+	if !enoughTime(namespace, true) {
+		return
+	}
+
 	// only sort main content types i.e. Post
 	if strings.Contains(namespace, "__") {
 		return
@@ -542,9 +663,9 @@ func SortContent(namespace string) {
 			return err
 		}
 
-		// encode to json and store as 'i:post.Time()':post
+		// encode to json and store as 'post.Time():i':post
 		for i := range bb {
-			cid := fmt.Sprintf("%d:%d", i, posts[i].Time())
+			cid := fmt.Sprintf("%d:%d", posts[i].Time(), i)
 			err = b.Put([]byte(cid), bb[i])
 			if err != nil {
 				return err

@@ -18,6 +18,8 @@ type Config struct {
 	Etag                    string   `json:"etag"`
 	DisableCORS             bool     `json:"cors_disabled"`
 	DisableGZIP             bool     `json:"gzip_disabled"`
+	DisableHTTPCache        bool     `json:"cache_disabled"`
+	CacheMaxAge             int64    `json:"cache_max_age"`
 	CacheInvalidate         []string `json:"cache"`
 	BackupBasicAuthUser     string   `json:"backup_basic_auth_user"`
 	BackupBasicAuthPassword string   `json:"backup_basic_auth_password"`
@@ -60,7 +62,7 @@ func (c *Config) MarshalEditor() ([]byte, error) {
 		},
 		editor.Field{
 			View: editor.Input("AdminEmail", c, map[string]string{
-				"label": "Adminstrator Email (notified of internal system information)",
+				"label": "Administrator Email (notified of internal system information)",
 			}),
 		},
 		editor.Field{
@@ -97,6 +99,19 @@ func (c *Config) MarshalEditor() ([]byte, error) {
 				"label": "Disable GZIP (will increase server speed, but also bandwidth)",
 			}, map[string]string{
 				"true": "Disable GZIP",
+			}),
+		},
+		editor.Field{
+			View: editor.Checkbox("DisableHTTPCache", c, map[string]string{
+				"label": "Disable HTTP Cache (overrides 'Cache-Control' header)",
+			}, map[string]string{
+				"true": "Disable HTTP Cache",
+			}),
+		},
+		editor.Field{
+			View: editor.Input("CacheMaxAge", c, map[string]string{
+				"label": "Max-Age value for HTTP caching (in seconds, 0 = 2592000)",
+				"type":  "text",
 			}),
 		},
 		editor.Field{
@@ -139,7 +154,7 @@ func (c *Config) MarshalEditor() ([]byte, error) {
 	script := []byte(`
 	<script>
 		$(function() {
-			// hide default fields & labels unecessary for the config
+			// hide default fields & labels unnecessary for the config
 			var fields = $('.default-fields');
 			fields.css('position', 'relative');
 			fields.find('input:not([type=submit])').remove();

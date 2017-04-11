@@ -79,7 +79,7 @@ func load(pc PonzuConnection, gazer string) {
 				fmt.Println("Already exists, updating:", s.Name)
 				PostToPonzu(s, fmt.Sprintf("%s://%s:%s/api/content/update?type=Star&id=%d", pc.Scheme, pc.Host, pc.Port, *id), pc)
 			} else {
-				PostToPonzu(s, fmt.Sprintf("%s://%s:%s/api/content/external?type=Star", pc.Scheme, pc.Host, pc.Port), pc)
+				PostToPonzu(s, fmt.Sprintf("%s://%s:%s/api/content/create?type=Star", pc.Scheme, pc.Host, pc.Port), pc)
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
